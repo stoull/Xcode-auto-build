@@ -17,6 +17,7 @@ function FuncUsage() {
 	echo $'\n'
 	echo "#----！！！注意：打包前在要CreateExportOptionsPlist中配置签名信息！！！----"
 	echo "#----！！！注意：如果要上传在fir平台，要配置fir_auth_info中的信息！！！----"
+	echo "#----！！！注意：上传在fir平台的App图标位置要注意一下 icon_path！！！----"
 	echo $'\n'
 	echo "#----$0使用示例：----"
 	echo $'\n'
@@ -28,6 +29,9 @@ function FuncUsage() {
 	echo $'\n'
 	echo "3. 打包~/Desktop/YourProjectDir目录下的*.workspace项目"
 	echo "$./xcode-auto-build.sh -d ~/Desktop/YourProjectDir -w -n"
+	echo $'\n'
+	echo "4. 指定输出目录，并将日志输出到文件"
+	echo "./xcode-auto-build.sh -w -nu '自动打包测试' -o ~/Desktop/Archive_log.log >> ~/Desktop/Archive_log.log 2>&1"
 	echo $'\n'
 	echo "#--------------------------------------------"
 }
@@ -41,8 +45,6 @@ function AutoIncrementBuild() {
 	    #获取当前版本号
 			get_build_version_cmd="xcodebuild -showBuildSettings -target ${build_target}| grep CURRENT_PROJECT_VERSION | sed 's/CURRENT_PROJECT_VERSION = //g' | tr -d ' '"
 			old_build_version=$(eval "$get_build_version_cmd")
-
-			echo "old_build_version: ${old_build_version}"
 
 			# 适配build格式
 			version_len=${#old_build_version}
@@ -61,7 +63,7 @@ function AutoIncrementBuild() {
 			fi
 
 			#更新版本号
-			agvtool new-version $new_build_version
+			agvtool new-version "$new_build_version"
 			# or agvtool next-version -all
 			#输出新版本号
 			new_build_version=$(eval "$get_build_version_cmd")
@@ -78,9 +80,9 @@ function CreateExportOptionsPlist() {
 	method="ad-hoc" # development
 	signingStyle="automatic"
 	bundle_identifier="${bundleID}"
-	mobileprovision_name="Your provision file"
+	mobileprovision_name="Your Provision File"
 	stripSwiftSymbols=true
-	teamID="youteamid"
+	teamID="Your teamID"
 	thinning="<none>"
 	# signingCertificate="Apple Development" # "Apple Distribution"
 
@@ -211,8 +213,13 @@ while getopts "d:p:nc:o:t:ws::u:" optname
 
 #------------------------ 配置编译信息 ------------------------
 
-#build文件夹路径
-build_path=${output_path}/build
+#build生成的目标文件夹路径
+build_path=${output_path}/${build_target}_build
+if [ -d ./ipa-build ];then
+	echo "build_path目录已存在"
+else
+		mkdir "${build_path}"
+fi
 # 指定导出ipa包需要用到的plist配置文件的路径
 export_options_plist_path="$build_path/ExportOptions-bash.plist"
 
@@ -353,7 +360,7 @@ if [ "${should_upload}" = "YES" ]; then
 		# 获取上传token
 		fir_auth_info=$(curl -X "POST" "http://api.appmeta.cn/apps" \
 		                    -H "Content-Type: application/json" \
-		                    -d "{\"type\":\"ios\", \"bundle_id\":\"${bundleID}\", \"api_token\":\"yourtoken\"}")
+		                    -d "{\"type\":\"ios\", \"bundle_id\":\"${bundleID}\", \"api_token\":\"your api token\"}")
 		fir_icon_key=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\1/g')
 		fir_icon_token=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\2/g')
 		fir_icon_uploadurl=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\3/g')
@@ -362,12 +369,21 @@ if [ "${should_upload}" = "YES" ]; then
 		fir_binary_uploadurl=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\6/g')
 		
 		# 上传 ICON
+		icon_path="${project_path}/${build_target}/Assets.xcassets/AppIcon.appiconset/1024.png"
+	  icon_result_info=$(curl	-F "key= ${fir_icon_key}"	\
+   									-F "token=${fir_icon_token}"	\
+   									-F "file=@${icon_path}"	\
+ 										${fir_icon_uploadurl})
+	  binary_download_url=$(echo "${binary_result_info}" | sed 's/.*"download_url":"\([^"]*\)".*/\1/')
+		binary_is_completed=$(echo "${binary_result_info}" | sed 's/.*"is_completed":\([^,]*\).*/\1/')
+		binary_release_id=$(echo "${binary_result_info}" | sed 's/.*"release_id":"\([^"]*\)".*/\1/')
 
 		echo "🌱 -------------------------------------------"
-		echo "🌼	上传完成!"
-		echo "🌼 ipa_path: ${ipa_path}"
-		echo "🌼 上传icon结果：${binary_result_info}"
+		echo "🌼	icon上传完成!"
+		echo "🌼 icon_path: ${icon_path}"
+		echo "🌼 上传icon回调：${binary_result_info}"
 		echo "🌱 -------------------------------------------"
+
 		# 上传 ipa
 	  binary_result_info=$(curl	-F "key= ${fir_binary_key}"	\
        									-F "token=${fir_binary_token}"	\
@@ -377,13 +393,31 @@ if [ "${should_upload}" = "YES" ]; then
        									-F "x:build=${bundleVersion}"	\
        									-F "x:release_type=Adhoc"	\
        									-F "x:changelog=${upload_log}"	\
-     										https://upload.qbox.me)
-		echo "🌱 -------------------------------------------"
-		echo "🌼	上传完成!"
-		echo "🌼 ipa_path: ${ipa_path}"
-		echo "🌼 上传ipa结果：${binary_result_info}"
-		echo "🌱 -------------------------------------------"
-		terminal-notifier -title "🌱上传完成🌼"  -message "log: ${upload_log}"
+     										${fir_binary_uploadurl})
+
+	  binary_download_url=$(echo "${binary_result_info}" | sed 's/.*"download_url":"\([^"]*\)".*/\1/')
+		binary_is_completed=$(echo "${binary_result_info}" | sed 's/.*"is_completed":\([^,]*\).*/\1/')
+		binary_release_id=$(echo "${binary_result_info}" | sed 's/.*"release_id":"\([^"]*\)".*/\1/')
+
+		echo "🌼fir_icon_key: ${binary_download_url}"
+		echo "🌼binary_is_completed: ${binary_is_completed}"
+		echo "🌼binary_release_id: ${binary_release_id}"
+
+		if [ "${binary_is_completed}" = "true" ]; then
+				echo "🌱 -------------------------------------------"
+				echo "🌼	binary上传完成!"
+				echo "🌼 ipa_path: ${ipa_path}"
+				echo "🌼 上传ipa回调：${binary_result_info}"
+				echo "🌱 -------------------------------------------"
+				terminal-notifier -title "🌱上传完成🌼"  -message "log: ${upload_log}"
+		else
+			echo "🌱 -------------------------------------------"
+			echo "🥀	上传失败! 没有找到ipa文件"
+			echo "🥀 ipa_path: ${ipa_path}"
+			echo "🥀 上传ipa回调：${binary_result_info}"
+			echo "🌱 -------------------------------------------"
+		fi
+
 	else
 		echo "🌱 -------------------------------------------"
 		echo "🥀	上传失败! 没有找到ipa文件"

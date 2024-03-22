@@ -6,6 +6,8 @@
 
 **！！！注意：如果要上传在fir平台，要配置`fir_auth_info`中的信息, 及token！！！**
 
+**！！！注意：上传在fir平台的App图标位置要注意一下 `icon_path`！！！**
+	
 **！！！注意：上面的信息 ！！！**
 
 `xcode-auto-build.sh` 的使用说明：
@@ -36,3 +38,6 @@
 3. 打包`~/Desktop/YourProjectDir`目录下的*.workspace项目
 
 	`$./xcode-auto-build.sh -d ~/Desktop/YourProjectDir -w -n`
+	
+4. 将日志输出到文件
+	`./xcode-auto-build.sh -w -nu '自动打包测试' >> ~/Desktop/Archive_log.log 2>&1`
