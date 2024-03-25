@@ -44,3 +44,6 @@
 	
 4. 将日志输出到文件
 	`./xcode-auto-build.sh -w -nu '自动打包测试' >> ~/Desktop/Archive_log.log 2>&1`
+	
+5. 打包并上传到禅道
+	`./xcode-auto-build.sh -w -nu '测试自动打包上传包' -z '自动打包上传并创建测试版本测试'`
