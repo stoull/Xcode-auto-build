@@ -14,10 +14,12 @@ function FuncUsage() {
 	echo "#		-n      编译前是否先clean工程"
 	echo "#		-p      平台标识符如iphone"
 	echo "#		-u Str 	表示上传到Fir，参数为日志信息"
+	echo "#		-z Str 	表示在禅道上创建版本，参数为版本说明信息"
 	echo $'\n'
 	echo "#----！！！注意：打包前在要CreateExportOptionsPlist中配置签名信息！！！----"
 	echo "#----！！！注意：如果要上传在fir平台，要配置fir_auth_info中的信息！！！----"
 	echo "#----！！！注意：上传在fir平台的App图标位置要注意一下 icon_path！！！----"
+	echo "#----！！！注意：要在禅道上创建版本需要配置 createVerionOnZenDao中的信息！！！----"
 	echo $'\n'
 	echo "#----$0使用示例：----"
 	echo $'\n'
@@ -29,9 +31,6 @@ function FuncUsage() {
 	echo $'\n'
 	echo "3. 打包~/Desktop/YourProjectDir目录下的*.workspace项目"
 	echo "$./xcode-auto-build.sh -d ~/Desktop/YourProjectDir -w -n"
-	echo $'\n'
-	echo "4. 指定输出目录，并将日志输出到文件"
-	echo "./xcode-auto-build.sh -w -nu '自动打包测试' -o ~/Desktop/Archive_log.log >> ~/Desktop/Archive_log.log 2>&1"
 	echo $'\n'
 	echo "#--------------------------------------------"
 }
@@ -74,15 +73,57 @@ function AutoIncrementBuild() {
 	fi
 }
 
+# 禅道上创建测试版本
+function createVerionOnZenDao() {
+	# 详见 禅道api文档：https://www.zentao.net/book/api/setting-369.html
+	# 获取上传token
+	zendao_auth_info=$(curl -X "POST" "http://192.168.1.xxx:8088/zentao/api.php/v1/tokens" \
+	                    	-H "Content-Type: application/json" \
+	                    	-d "{\"account\":\"your-account\", \"password\":\"your-password\"}")
+
+	zendao_token=$(echo "$zendao_auth_info" | sed -E 's/.*token":.*"(.*)".*/\1/g')
+
+	# 创建版本 676 为项目id，因为项目管理无规律，project_id及product需要手动获取配置，获取接口：GET http://192.168.1.xxx:8088/zentao/api.php/v1/projects?page=3&limit=100
+	# 对应的下载地址及源码地址，说明等信息也需要自已配置
+
+	project_id=676
+	product=16
+	execution=$(expr $project_id + 1)
+	name="iOS ${bundleShortVersion} (Build ${bundleVersion})"
+	builder="your zentao account"
+	date=$(date +"%Y-%m-%d")
+	branch=0
+	scmPath="git@192.168.1.xxx:hut/project.git"
+	filePath="https://xxxx.xxxx.com/"
+	desc="${version_des}"
+	# 创建版本
+	zendao_create_version=$(curl -X "POST" "http://192.168.1.xxx:8088/zentao/api.php/v1/projects/${project_id}/builds" \
+	                    		-H "Content-Type: application/json" \
+	                    		-H "Token: ${zendao_token}"	\
+	                    		-d "{\"execution\":${execution},\"product\":${product},\"name\":\"${name}\",\"builder\":\"${builder}\",\"date\":\"${date}\",\"branch\":${branch},\"scmPath\":\"${scmPath}\",\"filePath\":\"${filePath}\",\"desc\":\"${desc}\"}")
+
+	if [[ $zendao_create_version == *"error"* ]]; then
+	    error_msg=$(echo "$zendao_create_version" | sed -E 's/.*error":.*"(.*)".*/\1/g')
+	    echo "禅道版本创建失败: ${error_msg}"
+	    terminal-notifier -title "🌱禅道版本创建失败🥀"  -message "error_msg"
+	else
+		version_id=$(echo "$zendao_create_version" | sed -E 's/.*id":(.*),"project.*executionName":"(.*)","productName":"(.*)","productType.*/\1/g')
+		version_executionName=$(echo "$zendao_create_version" | sed -E 's/.*id":(.*),"project.*executionName":"(.*)","productName":"(.*)","productType.*/\2/g')
+		versionproductName=$(echo "$zendao_create_version" | sed -E 's/.*id":(.*),"project.*executionName":"(.*)","productName":"(.*)","productType.*/\3/g')
+	    echo "禅道版本创建成功 version_id:${version_id} executionName:${version_executionName} productName: ${versionproductName}"
+	    terminal-notifier -title "🌱禅道版本创建成功🌼"  -message "version_id:${version_id} executionName:${version_executionName} productName: ${versionproductName}"
+	fi
+}
+
 # 生成导出用的plist文件
 function CreateExportOptionsPlist() {
 	compileBitcode=true
 	method="ad-hoc" # development
 	signingStyle="automatic"
 	bundle_identifier="${bundleID}"
-	mobileprovision_name="Your Provision File"
+	mobileprovision_name="your provision_name"
 	stripSwiftSymbols=true
-	teamID="Your teamID"
+	teamID="your teamID"
 	thinning="<none>"
 	# signingCertificate="Apple Development" # "Apple Distribution"
 
@@ -129,8 +170,9 @@ should_upload="NO"
 isWorkSpace="NO"
 platform_id="iphone"
 upload_log=""
+version_des=""
 
-while getopts "d:p:nc:o:t:ws::u:" optname
+while getopts "d:p:nc:o:t:ws::u:z:" optname
   do
     case "$optname" in
 	  "n") should_clean="YES" ;;
@@ -180,7 +222,8 @@ while getopts "d:p:nc:o:t:ws::u:" optname
 			isWorkSpace="YES"
 			;;
 	  "s") build_scheme=${OPTARG} ;;
-	  "t") build_target=$OPTARG ;;
+	  "t") build_target=${OPTARG} ;;
+		"z") version_des=${OPTARG} ;;
     "?")
       echo "Error! Unknown option $OPTARG"
 			exit 2
@@ -360,7 +403,7 @@ if [ "${should_upload}" = "YES" ]; then
 		# 获取上传token
 		fir_auth_info=$(curl -X "POST" "http://api.appmeta.cn/apps" \
 		                    -H "Content-Type: application/json" \
-		                    -d "{\"type\":\"ios\", \"bundle_id\":\"${bundleID}\", \"api_token\":\"your api token\"}")
+		                    -d "{\"type\":\"ios\", \"bundle_id\":\"${bundleID}\", \"api_token\":\"your token\"}")
 		fir_icon_key=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\1/g')
 		fir_icon_token=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\2/g')
 		fir_icon_uploadurl=$(echo ${fir_auth_info} | sed 's/.*icon":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*"binary":{"key":"\(.*\)","token":"\(.*\)","upload_url":"\(.*\)","custom_headers":.*/\3/g')
@@ -410,6 +453,10 @@ if [ "${should_upload}" = "YES" ]; then
 				echo "🌼 上传ipa回调：${binary_result_info}"
 				echo "🌱 -------------------------------------------"
 				terminal-notifier -title "🌱上传完成🌼"  -message "log: ${upload_log}"
+
+				# 创建禅道版本
+				createVerionOnZenDao
+
 		else
 			echo "🌱 -------------------------------------------"
 			echo "🥀	上传失败! 没有找到ipa文件"
